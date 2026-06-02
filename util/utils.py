@@ -20,15 +20,35 @@ from matplotlib import pyplot as plt
 import easyocr
 from paddleocr import PaddleOCR
 reader = easyocr.Reader(['en'])
-paddle_ocr = PaddleOCR(
-    lang='en',  # other lang also available
-    use_angle_cls=False,
-    use_gpu=False,  # using cuda will conflict with pytorch in the same process
-    show_log=False,
-    max_batch_size=1024,
-    use_dilation=True,  # improves accuracy
-    det_db_score_mode='slow',  # improves accuracy
-    rec_batch_num=1024)
+
+
+def _create_paddle_ocr():
+    kwargs = {
+        'lang': 'en',  # other languages are also available
+        'use_angle_cls': False,
+        'use_gpu': False,  # cuda can conflict with pytorch in the same process
+        'show_log': False,
+        'max_batch_size': 1024,
+        'use_dilation': True,  # improves accuracy
+        'det_db_score_mode': 'slow',  # improves accuracy
+        'rec_batch_num': 1024,
+    }
+
+    # PaddleOCR 3.x dropped/renamed several constructor args; retry without unknown args.
+    while True:
+        try:
+            return PaddleOCR(**kwargs)
+        except ValueError as exc:
+            msg = str(exc)
+            if 'Unknown argument:' not in msg:
+                raise
+            unknown_arg = msg.split('Unknown argument:')[-1].strip()
+            if unknown_arg not in kwargs:
+                raise
+            kwargs.pop(unknown_arg)
+
+
+paddle_ocr = _create_paddle_ocr()
 import time
 import base64
 
@@ -60,7 +80,7 @@ def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2
         ).to(device)
     elif model_name == "florence2":
         from transformers import AutoProcessor, AutoModelForCausalLM 
-        processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base", trust_remote_code=True)
+        processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base-ft", trust_remote_code=True)
         if device == 'cpu':
             model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float32, trust_remote_code=True)
         else:
@@ -514,9 +534,26 @@ def check_ocr_box(image_source: Union[str, Image.Image], display_img = True, out
             text_threshold = 0.5
         else:
             text_threshold = easyocr_args['text_threshold']
-        result = paddle_ocr.ocr(image_np, cls=False)[0]
-        coord = [item[0] for item in result if item[1][1] > text_threshold]
-        text = [item[1][0] for item in result if item[1][1] > text_threshold]
+
+        # PaddleOCR has API/return-format differences across major versions.
+        try:
+            ocr_output = paddle_ocr.ocr(image_np, cls=False)
+        except TypeError:
+            ocr_output = paddle_ocr.ocr(image_np)
+
+        result = ocr_output[0] if isinstance(ocr_output, list) and len(ocr_output) > 0 else ocr_output
+
+        coord = []
+        text = []
+        for item in result or []:
+            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                continue
+            box, rec = item[0], item[1]
+            if not isinstance(rec, (list, tuple)) or len(rec) < 2:
+                continue
+            if rec[1] > text_threshold:
+                coord.append(box)
+                text.append(rec[0])
     else:  # EasyOCR
         if easyocr_args is None:
             easyocr_args = {}
