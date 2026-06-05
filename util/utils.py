@@ -18,37 +18,7 @@ import numpy as np
 # %matplotlib inline
 from matplotlib import pyplot as plt
 import easyocr
-from paddleocr import PaddleOCR
 reader = easyocr.Reader(['en'])
-
-
-def _create_paddle_ocr():
-    kwargs = {
-        'lang': 'en',  # other languages are also available
-        'use_angle_cls': False,
-        'use_gpu': False,  # cuda can conflict with pytorch in the same process
-        'show_log': False,
-        'max_batch_size': 1024,
-        'use_dilation': True,  # improves accuracy
-        'det_db_score_mode': 'slow',  # improves accuracy
-        'rec_batch_num': 1024,
-    }
-
-    # PaddleOCR 3.x dropped/renamed several constructor args; retry without unknown args.
-    while True:
-        try:
-            return PaddleOCR(**kwargs)
-        except ValueError as exc:
-            msg = str(exc)
-            if 'Unknown argument:' not in msg:
-                raise
-            unknown_arg = msg.split('Unknown argument:')[-1].strip()
-            if unknown_arg not in kwargs:
-                raise
-            kwargs.pop(unknown_arg)
-
-
-paddle_ocr = _create_paddle_ocr()
 import time
 import base64
 
