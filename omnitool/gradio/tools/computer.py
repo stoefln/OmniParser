@@ -11,8 +11,16 @@ from .base import BaseAnthropicTool, ToolError, ToolResult
 from .screen_capture import get_screenshot
 import requests
 import re
+import os
 
 OUTPUT_DIR = "./tmp/outputs"
+
+
+def get_host_control_base_url() -> str:
+    url = os.getenv("OMNITOOL_HOST_CONTROL_URL", "http://localhost:5000").strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+    return url
 
 TYPING_DELAY_MS = 12
 TYPING_GROUP_SIZE = 50
@@ -237,7 +245,7 @@ class ComputerTool(BaseAnthropicTool):
         try:
             print(f"sending to vm: {command_list}")
             response = requests.post(
-                f"http://localhost:5000/execute", 
+                f"{get_host_control_base_url()}/execute",
                 headers={'Content-Type': 'application/json'},
                 json={"command": command_list},
                 timeout=90

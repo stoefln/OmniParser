@@ -75,8 +75,20 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Gradio App")
     parser.add_argument("--windows_host_url", type=str, default='')
     parser.add_argument("--omniparser_server_url", type=str, default="localhost:8000")
+    parser.add_argument("--host_control_url", type=str, default=os.getenv("OMNITOOL_HOST_CONTROL_URL", "localhost:5000"))
     return parser.parse_args()
 args = parse_arguments()
+
+
+def normalize_service_url(url: str) -> str:
+    url = (url or "").strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+    return url
+
+
+# Ensure tools use the same host-control endpoint as the UI validation.
+os.environ["OMNITOOL_HOST_CONTROL_URL"] = normalize_service_url(args.host_control_url)
 
 
 class Sender(StrEnum):
@@ -227,15 +239,18 @@ def chatbot_output_callback(message, chatbot_state, hide_images=False, sender="b
 def valid_params(user_input, state):
     """Validate all requirements and return a list of error messages."""
     errors = []
-    
-    for server_name, url in [('Windows Host', 'localhost:5000'), ('OmniParser Server', args.omniparser_server_url)]:
+
+    for server_name, url in [
+        ('Windows Host', args.host_control_url),
+        ('OmniParser Server', args.omniparser_server_url),
+    ]:
         try:
-            url = f'http://{url}/probe'
-            response = requests.get(url, timeout=3)
+            probe_url = f"{normalize_service_url(url)}/probe"
+            response = requests.get(probe_url, timeout=3)
             if response.status_code != 200:
-                errors.append(f"{server_name} is not responding")
-        except RequestException as e:
-            errors.append(f"{server_name} is not responding")
+                errors.append(f"{server_name} is not responding at {normalize_service_url(url)}")
+        except RequestException:
+            errors.append(f"{server_name} is not responding at {normalize_service_url(url)}")
     
     if not state["api_key"].strip():
         errors.append("LLM API Key is not set")
@@ -314,7 +329,7 @@ def get_display_panel_html() -> str:
         '<div style="height:580px;display:flex;align-items:center;justify-content:center;'
         'background:#f8f9fa;border:1px solid #e5e7eb;border-radius:8px;padding:20px;text-align:center;">'
         '<div><h3 style="margin:0 0 8px 0;">Host Screen Mode</h3>'
-        '<p style="margin:0;color:#4b5563;">No VNC viewer configured. OmniTool will still control the current desktop via localhost:5000.</p></div>'
+        f'<p style="margin:0;color:#4b5563;">No VNC viewer configured. OmniTool will still control the current desktop via {normalize_service_url(args.host_control_url)}.</p></div>'
         '</div>'
     )
 
