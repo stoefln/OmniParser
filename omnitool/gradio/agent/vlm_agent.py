@@ -17,6 +17,44 @@ from agent.llm_utils.utils import is_image_path
 import time
 import re
 
+VALID_NEXT_ACTIONS = {
+    "type",
+    "left_click",
+    "right_click",
+    "double_click",
+    "hover",
+    "scroll_up",
+    "scroll_down",
+    "wait",
+    "none",
+}
+
+
+def normalize_next_action(raw_action: str) -> str:
+    """Normalize model output to one supported action token."""
+    if raw_action is None:
+        return "None"
+
+    action = str(raw_action).strip()
+    if not action:
+        return "None"
+
+    lowered = action.lower().strip()
+    if lowered in VALID_NEXT_ACTIONS:
+        return "None" if lowered == "none" else lowered
+
+    # Handle common verbose outputs like: "left_click, click the send button"
+    first_token = re.split(r"[,;:\\n]|\\s+", lowered, maxsplit=1)[0].strip()
+    if first_token in VALID_NEXT_ACTIONS:
+        return "None" if first_token == "none" else first_token
+
+    # Fallback: search any known action keyword in the string.
+    for candidate in sorted(VALID_NEXT_ACTIONS, key=len, reverse=True):
+        if candidate in lowered:
+            return "None" if candidate == "none" else candidate
+
+    return "None"
+
 OUTPUT_DIR = "./tmp/outputs"
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
@@ -149,6 +187,8 @@ class VLMAgent:
         
         vlm_response_json = extract_data(vlm_response, "json")
         vlm_response_json = json.loads(vlm_response_json)
+        normalized_action = normalize_next_action(vlm_response_json.get("Next Action", "None"))
+        vlm_response_json["Next Action"] = normalized_action
 
         img_to_show_base64 = parsed_screen["som_image_base64"]
         if "Box ID" in vlm_response_json:
@@ -197,7 +237,7 @@ class VLMAgent:
             print("Task paused/completed.")
         elif vlm_response_json["Next Action"] == "type":
             sim_content_block = BetaToolUseBlock(id=f'toolu_{uuid.uuid4()}',
-                                        input={'action': vlm_response_json["Next Action"], 'text': vlm_response_json["value"]},
+                                        input={'action': vlm_response_json["Next Action"], 'text': vlm_response_json.get("value", "")},
                                         name='computer', type='tool_use')
             response_content.append(sim_content_block)
         else:
@@ -238,7 +278,7 @@ Output format:
 ```json
 {{
     "Reasoning": str, # describe what is in the current screen, taking into account the history, then describe your step-by-step thoughts on how to achieve the task, choose one action from available actions at a time.
-    "Next Action": "action_type, action description" | "None" # one action at a time, describe it in short and precisely. 
+    "Next Action": "type" | "left_click" | "right_click" | "double_click" | "hover" | "scroll_up" | "scroll_down" | "wait" | "None" # output only one exact token; do not add explanations or punctuation in this field.
     "Box ID": n,
     "value": "xxx" # only provide value field if the action is type, else don't include value key
 }}
@@ -256,7 +296,7 @@ One Example:
 Another Example:
 ```json
 {{
-    "Reasoning": "The current screen shows the front page of amazon. There is no previous action. Therefore I need to type "Apple watch" in the search bar.",
+    "Reasoning": "The current screen shows the front page of amazon. There is no previous action. Therefore I need to type Apple watch in the search bar.",
     "Next Action": "type",
     "Box ID": n,
     "value": "Apple watch"
@@ -273,26 +313,31 @@ Another Example:
 
 IMPORTANT NOTES:
 1. You should only give a single action at a time.
+2. Keep "Reasoning" brief and concrete (max two short sentences). Avoid generic or repetitive text.
+3. "Next Action" must be exactly one token from the allowed list. Do not include descriptions in that field.
+4. "Box ID" should be included only when clicking/hovering a specific element. For scroll/wait/None, omit "Box ID".
+5. If the user asks to watch a video (for example YouTube highlights), prioritize browser actions: focus search/input, type the query, submit, then click a relevant video result.
+6. Do not interact with a page chatbot unless the task explicitly asks for chatting with that bot.
 
 """
         thinking_model = "r1" in self.model
         if not thinking_model:
             main_section += """
-2. You should give an analysis to the current screen, and reflect on what has been done by looking at the history, then describe your step-by-step thoughts on how to achieve the task.
+7. You should give an analysis to the current screen and history, then choose only the immediate next action.
 
 """
         else:
             main_section += """
-2. In <think> XML tags give an analysis to the current screen, and reflect on what has been done by looking at the history, then describe your step-by-step thoughts on how to achieve the task. In <output> XML tags put the next action prediction JSON.
+7. In <think> XML tags give a brief analysis of current screen and history, then choose only the immediate next action. In <output> XML tags put the next action prediction JSON.
 
 """
         main_section += """
-3. Attach the next action prediction in the "Next Action".
-4. You should not include other actions, such as keyboard shortcuts.
-5. When the task is completed, don't complete additional actions. You should say "Next Action": "None" in the json field.
-6. The tasks involve buying multiple products or navigating through multiple pages. You should break it into subgoals and complete each subgoal one by one in the order of the instructions.
-7. avoid choosing the same action/elements multiple times in a row, if it happens, reflect to yourself, what may have gone wrong, and predict a different action.
-8. If you are prompted with login information page or captcha page, or you think it need user's permission to do the next action, you should say "Next Action": "None" in the json field.
+8. Attach the next action prediction in the "Next Action".
+9. You should not include other actions, such as keyboard shortcuts.
+10. When the task is completed, don't complete additional actions. You should say "Next Action": "None" in the json field.
+11. Break multi-step tasks into subgoals and execute one subgoal at a time in user-requested order.
+12. Avoid choosing the same action/element multiple times in a row. If repetition occurs, pick a different corrective action.
+13. If you are prompted with login, captcha, or anything requiring user permission, return "Next Action": "None".
 """ 
 
         return main_section

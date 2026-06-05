@@ -125,3 +125,5 @@ def sampling_loop_sync(
         
             if not tool_result_content:
                 return messages
+
+            messages.append({"content": tool_result_content, "role": "user"})
