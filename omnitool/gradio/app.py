@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import cast
 import argparse
 import gradio as gr
+from gradio_client import utils as gradio_client_utils
 from anthropic import APIResponse
 from anthropic.types import TextBlock
 from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaToolUseBlock
@@ -53,6 +54,21 @@ def load_env_file(env_path: Path) -> None:
 
 
 load_env_file(ENV_FILE)
+
+
+def patch_gradio_schema_bug() -> None:
+    """Handle boolean JSON schemas in older/incompatible gradio_client builds."""
+    original_get_type = gradio_client_utils.get_type
+
+    def safe_get_type(schema):
+        if isinstance(schema, bool):
+            return "boolean" if schema else "any"
+        return original_get_type(schema)
+
+    gradio_client_utils.get_type = safe_get_type
+
+
+patch_gradio_schema_bug()
 
 def parse_arguments():
 
