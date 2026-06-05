@@ -25,6 +25,8 @@ import base64
 
 CONFIG_DIR = Path("~/.anthropic").expanduser()
 API_KEY_FILE = CONFIG_DIR / "api_key"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ENV_FILE = PROJECT_ROOT / ".env"
 
 INTRO_TEXT = '''
 OmniParser lets you turn any vision-langauge model into an AI agent. We currently support **OpenAI (4o/o1/o3-mini), DeepSeek (R1), Qwen (2.5VL) or Anthropic Computer Use (Sonnet).**
@@ -32,10 +34,30 @@ OmniParser lets you turn any vision-langauge model into an AI agent. We currentl
 Type a message and press submit to start OmniTool. Press stop to pause, and press the trash icon in the chat to clear the message history.
 '''
 
+
+def load_env_file(env_path: Path) -> None:
+    """Load KEY=VALUE pairs from a .env file into process environment."""
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault(key, value)
+
+
+load_env_file(ENV_FILE)
+
 def parse_arguments():
 
     parser = argparse.ArgumentParser(description="Gradio App")
-    parser.add_argument("--windows_host_url", type=str, default='localhost:8006')
+    parser.add_argument("--windows_host_url", type=str, default='')
     parser.add_argument("--omniparser_server_url", type=str, default="localhost:8000")
     return parser.parse_args()
 args = parse_arguments()
@@ -51,7 +73,7 @@ def setup_state(state):
     if "messages" not in state:
         state["messages"] = []
     if "model" not in state:
-        state["model"] = "omniparser + gpt-4o"
+        state["model"] = "omniparser + gpt-4.1-mini"
     if "provider" not in state:
         state["provider"] = "openai"
     if "openai_api_key" not in state:  # Fetch API keys from environment variables
@@ -59,7 +81,7 @@ def setup_state(state):
     if "anthropic_api_key" not in state:
         state["anthropic_api_key"] = os.getenv("ANTHROPIC_API_KEY", "")
     if "api_key" not in state:
-        state["api_key"] = ""
+        state["api_key"] = state.get("openai_api_key", "")
     if "auth_validated" not in state:
         state["auth_validated"] = False
     if "responses" not in state:
@@ -268,6 +290,18 @@ def get_header_image_base64():
         print(f"Failed to load header image: {e}")
         return None
 
+
+def get_display_panel_html() -> str:
+    if args.windows_host_url:
+        return f'<iframe src="http://{args.windows_host_url}/vnc.html?view_only=1&autoconnect=1&resize=scale" width="100%" height="580" allow="fullscreen"></iframe>'
+    return (
+        '<div style="height:580px;display:flex;align-items:center;justify-content:center;'
+        'background:#f8f9fa;border:1px solid #e5e7eb;border-radius:8px;padding:20px;text-align:center;">'
+        '<div><h3 style="margin:0 0 8px 0;">Host Screen Mode</h3>'
+        '<p style="margin:0;color:#4b5563;">No VNC viewer configured. OmniTool will still control the current desktop via localhost:5000.</p></div>'
+        '</div>'
+    )
+
 with gr.Blocks(theme=gr.themes.Default()) as demo:
     gr.HTML("""
         <style>
@@ -302,8 +336,8 @@ with gr.Blocks(theme=gr.themes.Default()) as demo:
             with gr.Column():
                 model = gr.Dropdown(
                     label="Model",
-                    choices=["omniparser + gpt-4o", "omniparser + o1", "omniparser + o3-mini", "omniparser + R1", "omniparser + qwen2.5vl", "claude-3-5-sonnet-20241022", "omniparser + gpt-4o-orchestrated", "omniparser + o1-orchestrated", "omniparser + o3-mini-orchestrated", "omniparser + R1-orchestrated", "omniparser + qwen2.5vl-orchestrated"],
-                    value="omniparser + gpt-4o",
+                    choices=["omniparser + gpt-4.1-mini", "omniparser + gpt-4o", "omniparser + o1", "omniparser + o3-mini", "omniparser + R1", "omniparser + qwen2.5vl", "claude-3-5-sonnet-20241022", "omniparser + gpt-4o-orchestrated", "omniparser + o1-orchestrated", "omniparser + o3-mini-orchestrated", "omniparser + R1-orchestrated", "omniparser + qwen2.5vl-orchestrated"],
+                    value="omniparser + gpt-4.1-mini",
                     interactive=True,
                 )
             with gr.Column():
@@ -345,7 +379,7 @@ with gr.Blocks(theme=gr.themes.Default()) as demo:
             chatbot = gr.Chatbot(label="Chatbot History", autoscroll=True, height=580)
         with gr.Column(scale=3):
             iframe = gr.HTML(
-                f'<iframe src="http://{args.windows_host_url}/vnc.html?view_only=1&autoconnect=1&resize=scale" width="100%" height="580" allow="fullscreen"></iframe>',
+                get_display_panel_html(),
                 container=False,
                 elem_classes="no-padding"
             )
@@ -356,7 +390,7 @@ with gr.Blocks(theme=gr.themes.Default()) as demo:
         
         if model_selection == "claude-3-5-sonnet-20241022":
             provider_choices = [option.value for option in APIProvider if option.value != "openai"]
-        elif model_selection in set(["omniparser + gpt-4o", "omniparser + o1", "omniparser + o3-mini", "omniparser + gpt-4o-orchestrated", "omniparser + o1-orchestrated", "omniparser + o3-mini-orchestrated"]):
+        elif model_selection in set(["omniparser + gpt-4.1-mini", "omniparser + gpt-4o", "omniparser + o1", "omniparser + o3-mini", "omniparser + gpt-4o-orchestrated", "omniparser + o1-orchestrated", "omniparser + o3-mini-orchestrated"]):
             provider_choices = ["openai"]
         elif model_selection == "omniparser + R1":
             provider_choices = ["groq"]

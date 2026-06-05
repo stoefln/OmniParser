@@ -39,7 +39,9 @@ class VLMAgent:
         only_n_most_recent_images: int | None = None,
         print_usage: bool = True,
     ):
-        if model == "omniparser + gpt-4o":
+        if model == "omniparser + gpt-4.1-mini":
+            self.model = "gpt-4.1-mini"
+        elif model == "omniparser + gpt-4o":
             self.model = "gpt-4o-2024-11-20"
         elif model == "omniparser + R1":
             self.model = "deepseek-r1-distill-llama-70b"
