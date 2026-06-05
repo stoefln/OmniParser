@@ -2,6 +2,7 @@ import json
 from collections.abc import Callable
 from typing import cast, Callable
 import uuid
+import os
 from PIL import Image, ImageDraw
 import base64
 from io import BytesIO
@@ -17,6 +18,7 @@ import time
 import re
 
 OUTPUT_DIR = "./tmp/outputs"
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
 def extract_data(input_string, data_type):
     # Regular expression to extract content starting from '```python' until the end if there are no closing backticks
@@ -100,7 +102,7 @@ class VLMAgent:
                 model_name=self.model,
                 api_key=self.api_key,
                 max_tokens=self.max_tokens,
-                provider_base_url="https://api.openai.com/v1",
+                provider_base_url=OPENAI_BASE_URL,
                 temperature=0,
             )
             print(f"oai token usage: {token_usage}")

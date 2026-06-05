@@ -19,6 +19,7 @@ import time
 import re
 import os
 OUTPUT_DIR = "./tmp/outputs"
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 ORCHESTRATOR_LEDGER_PROMPT = """
 Recall we are working on the following request:
 
@@ -159,7 +160,7 @@ class VLMOrchestratedAgent:
                 model_name=self.model,
                 api_key=self.api_key,
                 max_tokens=self.max_tokens,
-                provider_base_url="https://api.openai.com/v1",
+                provider_base_url=OPENAI_BASE_URL,
                 temperature=0,
             )
             print(f"oai token usage: {token_usage}")
@@ -387,7 +388,7 @@ IMPORTANT NOTES:
                 model_name=self.model,
                 api_key=self.api_key,
                 max_tokens=self.max_tokens,
-                provider_base_url="https://api.openai.com/v1",
+                provider_base_url=OPENAI_BASE_URL,
                 temperature=0,
             )
         plan = extract_data(vlm_response, "json")
@@ -419,7 +420,7 @@ IMPORTANT NOTES:
                 model_name=self.model,
                 api_key=self.api_key,
                 max_tokens=self.max_tokens,
-                provider_base_url="https://api.openai.com/v1",
+                provider_base_url=OPENAI_BASE_URL,
                 temperature=0,
             )
         updated_ledger = extract_data(vlm_response, "json")
