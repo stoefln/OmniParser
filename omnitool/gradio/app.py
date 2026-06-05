@@ -457,4 +457,12 @@ with gr.Blocks(theme=gr.themes.Default()) as demo:
     stop_button.click(stop_app, [state], None)
     
 if __name__ == "__main__":
-    demo.launch(server_name="127.0.0.1", server_port=7888)
+    try:
+        demo.launch(server_name="127.0.0.1", server_port=7888, show_api=False)
+    except ValueError as exc:
+        # Some VM/proxy setups cannot access localhost directly.
+        if "localhost is not accessible" in str(exc):
+            print("Localhost is not accessible in this environment; retrying with share=True")
+            demo.launch(server_name="0.0.0.0", server_port=7888, show_api=False, share=True)
+        else:
+            raise
