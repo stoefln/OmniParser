@@ -54,6 +54,112 @@ Please output an answer in pure JSON format according to the following schema. T
     }}
 """
 
+VALID_NEXT_ACTIONS = {
+    "type",
+    "left_click",
+    "right_click",
+    "double_click",
+    "hover",
+    "scroll_up",
+    "scroll_down",
+    "wait",
+    "none",
+}
+
+CONTROL_PANEL_STRONG_KEYWORDS = {
+    "gradio",
+    "omniparser",
+    "api provider",
+    "chatbot history",
+    "host screen mode",
+    "no vnc viewer configured",
+    "type a message to send to omniparser",
+}
+
+CONTROL_PANEL_WEAK_KEYWORDS = {
+    "send",
+    "stop",
+}
+
+CONTROL_PANEL_CONTEXT_MARKERS = {
+    "chatbot history",
+    "api provider",
+    "host screen mode",
+    "no vnc viewer configured",
+    "omniparser",
+}
+
+
+def normalize_next_action(raw_action: str) -> str:
+    """Normalize model output to one supported action token."""
+    if raw_action is None:
+        return "None"
+
+    action = str(raw_action).strip()
+    if not action:
+        return "None"
+
+    lowered = action.lower().strip()
+    if lowered in VALID_NEXT_ACTIONS:
+        return "None" if lowered == "none" else lowered
+
+    first_token = re.split(r"[,;:\\n]|\\s+", lowered, maxsplit=1)[0].strip()
+    if first_token in VALID_NEXT_ACTIONS:
+        return "None" if first_token == "none" else first_token
+
+    for candidate in sorted(VALID_NEXT_ACTIONS, key=len, reverse=True):
+        if candidate in lowered:
+            return "None" if candidate == "none" else candidate
+
+    return "None"
+
+
+def _screen_has_control_panel_context(parsed_screen: dict) -> bool:
+    screen_blob = str(parsed_screen.get("screen_info", "")).lower()
+    return any(marker in screen_blob for marker in CONTROL_PANEL_CONTEXT_MARKERS)
+
+
+def should_block_box_action(parsed_screen: dict, box_id: int) -> bool:
+    parsed_items = parsed_screen.get("parsed_content_list", [])
+    if not isinstance(parsed_items, list) or box_id < 0 or box_id >= len(parsed_items):
+        return False
+
+    elem = parsed_items[box_id] or {}
+    label = str(elem.get("content", "")).strip().lower()
+    if not label or label == "none":
+        return False
+
+    if any(keyword in label for keyword in CONTROL_PANEL_STRONG_KEYWORDS):
+        return True
+
+    if any(keyword == label for keyword in CONTROL_PANEL_WEAK_KEYWORDS):
+        return _screen_has_control_panel_context(parsed_screen)
+
+    return False
+
+
+def enforce_safe_next_action(vlm_response_json: dict, parsed_screen: dict) -> dict:
+    normalized_action = normalize_next_action(vlm_response_json.get("Next Action", "None"))
+    vlm_response_json["Next Action"] = normalized_action
+
+    if "Box ID" not in vlm_response_json:
+        return vlm_response_json
+
+    try:
+        box_id = int(vlm_response_json["Box ID"])
+    except (TypeError, ValueError):
+        return vlm_response_json
+
+    if normalized_action in {"left_click", "right_click", "double_click", "hover"} and should_block_box_action(parsed_screen, box_id):
+        vlm_response_json["Reasoning"] = (
+            "Selected target is part of OmniTool control UI; skipping this element and waiting for the next screen state."
+        )
+        vlm_response_json["Next Action"] = "wait"
+        vlm_response_json.pop("Box ID", None)
+        vlm_response_json.pop("value", None)
+
+    return vlm_response_json
+
 def extract_data(input_string, data_type):
     # Regular expression to extract content starting from '```python' until the end if there are no closing backticks
     pattern = f"```{data_type}" + r"(.*?)(```|$)"
@@ -209,6 +315,7 @@ class VLMOrchestratedAgent:
         
         vlm_response_json = extract_data(vlm_response, "json")
         vlm_response_json = json.loads(vlm_response_json)
+        vlm_response_json = enforce_safe_next_action(vlm_response_json, parsed_screen)
 
         img_to_show_base64 = parsed_screen["som_image_base64"]
         if "Box ID" in vlm_response_json:
@@ -352,26 +459,27 @@ Another Example:
 
 IMPORTANT NOTES:
 1. You should only give a single action at a time.
+2. Do not click OmniTool/Gradio control-panel elements (for example: Send, Stop, Chatbot History, API Provider, Host Screen Mode) once the run has started.
 
 """
         thinking_model = "r1" in self.model
         if not thinking_model:
             main_section += """
-2. You should give an analysis to the current screen, and reflect on what has been done by looking at the history, then describe your step-by-step thoughts on how to achieve the task.
+3. You should give an analysis to the current screen, and reflect on what has been done by looking at the history, then describe your step-by-step thoughts on how to achieve the task.
 
 """
         else:
             main_section += """
-2. In <think> XML tags give an analysis to the current screen, and reflect on what has been done by looking at the history, then describe your step-by-step thoughts on how to achieve the task. In <output> XML tags put the next action prediction JSON.
+3. In <think> XML tags give an analysis to the current screen, and reflect on what has been done by looking at the history, then describe your step-by-step thoughts on how to achieve the task. In <output> XML tags put the next action prediction JSON.
 
 """
         main_section += """
-3. Attach the next action prediction in the "Next Action".
-4. You should not include other actions, such as keyboard shortcuts.
-5. When the task is completed, don't complete additional actions. You should say "Next Action": "None" in the json field.
-6. The tasks involve buying multiple products or navigating through multiple pages. You should break it into subgoals and complete each subgoal one by one in the order of the instructions.
-7. avoid choosing the same action/elements multiple times in a row, if it happens, reflect to yourself, what may have gone wrong, and predict a different action.
-8. If you are prompted with login information page or captcha page, or you think it need user's permission to do the next action, you should say "Next Action": "None" in the json field.
+4. Attach the next action prediction in the "Next Action".
+5. You should not include other actions, such as keyboard shortcuts.
+6. When the task is completed, don't complete additional actions. You should say "Next Action": "None" in the json field.
+7. The tasks involve buying multiple products or navigating through multiple pages. You should break it into subgoals and complete each subgoal one by one in the order of the instructions.
+8. avoid choosing the same action/elements multiple times in a row, if it happens, reflect to yourself, what may have gone wrong, and predict a different action.
+9. If you are prompted with login information page or captcha page, or you think it need user's permission to do the next action, you should say "Next Action": "None" in the json field.
 """ 
 
         return main_section

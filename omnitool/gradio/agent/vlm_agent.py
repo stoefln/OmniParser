@@ -29,6 +29,29 @@ VALID_NEXT_ACTIONS = {
     "none",
 }
 
+CONTROL_PANEL_STRONG_KEYWORDS = {
+    "gradio",
+    "omniparser",
+    "api provider",
+    "chatbot history",
+    "host screen mode",
+    "no vnc viewer configured",
+    "type a message to send to omniparser",
+}
+
+CONTROL_PANEL_WEAK_KEYWORDS = {
+    "send",
+    "stop",
+}
+
+CONTROL_PANEL_CONTEXT_MARKERS = {
+    "chatbot history",
+    "api provider",
+    "host screen mode",
+    "no vnc viewer configured",
+    "omniparser",
+}
+
 
 def normalize_next_action(raw_action: str) -> str:
     """Normalize model output to one supported action token."""
@@ -54,6 +77,53 @@ def normalize_next_action(raw_action: str) -> str:
             return "None" if candidate == "none" else candidate
 
     return "None"
+
+
+def _screen_has_control_panel_context(parsed_screen: dict) -> bool:
+    screen_blob = str(parsed_screen.get("screen_info", "")).lower()
+    return any(marker in screen_blob for marker in CONTROL_PANEL_CONTEXT_MARKERS)
+
+
+def should_block_box_action(parsed_screen: dict, box_id: int) -> bool:
+    parsed_items = parsed_screen.get("parsed_content_list", [])
+    if not isinstance(parsed_items, list) or box_id < 0 or box_id >= len(parsed_items):
+        return False
+
+    elem = parsed_items[box_id] or {}
+    label = str(elem.get("content", "")).strip().lower()
+    if not label or label == "none":
+        return False
+
+    if any(keyword in label for keyword in CONTROL_PANEL_STRONG_KEYWORDS):
+        return True
+
+    if any(keyword == label for keyword in CONTROL_PANEL_WEAK_KEYWORDS):
+        return _screen_has_control_panel_context(parsed_screen)
+
+    return False
+
+
+def enforce_safe_next_action(vlm_response_json: dict, parsed_screen: dict) -> dict:
+    normalized_action = normalize_next_action(vlm_response_json.get("Next Action", "None"))
+    vlm_response_json["Next Action"] = normalized_action
+
+    if "Box ID" not in vlm_response_json:
+        return vlm_response_json
+
+    try:
+        box_id = int(vlm_response_json["Box ID"])
+    except (TypeError, ValueError):
+        return vlm_response_json
+
+    if normalized_action in {"left_click", "right_click", "double_click", "hover"} and should_block_box_action(parsed_screen, box_id):
+        vlm_response_json["Reasoning"] = (
+            "Selected target is part of OmniTool control UI; skipping this element and waiting for the next screen state."
+        )
+        vlm_response_json["Next Action"] = "wait"
+        vlm_response_json.pop("Box ID", None)
+        vlm_response_json.pop("value", None)
+
+    return vlm_response_json
 
 OUTPUT_DIR = "./tmp/outputs"
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -187,8 +257,7 @@ class VLMAgent:
         
         vlm_response_json = extract_data(vlm_response, "json")
         vlm_response_json = json.loads(vlm_response_json)
-        normalized_action = normalize_next_action(vlm_response_json.get("Next Action", "None"))
-        vlm_response_json["Next Action"] = normalized_action
+        vlm_response_json = enforce_safe_next_action(vlm_response_json, parsed_screen)
 
         img_to_show_base64 = parsed_screen["som_image_base64"]
         if "Box ID" in vlm_response_json:
@@ -318,6 +387,7 @@ IMPORTANT NOTES:
 4. "Box ID" should be included only when clicking/hovering a specific element. For scroll/wait/None, omit "Box ID".
 5. If the user asks to watch a video (for example YouTube highlights), prioritize browser actions: focus search/input, type the query, submit, then click a relevant video result.
 6. Do not interact with a page chatbot unless the task explicitly asks for chatting with that bot.
+7. Do not click OmniTool/Gradio control-panel elements (for example: Send, Stop, Chatbot History, API Provider, Host Screen Mode) once the run has started.
 
 """
         thinking_model = "r1" in self.model
