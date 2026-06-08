@@ -81,12 +81,46 @@ CONTROL_PANEL_WEAK_KEYWORDS = {
     "stop",
 }
 
+BOX_ACTIONS = {
+    "left_click",
+    "right_click",
+    "double_click",
+    "hover",
+    "type",
+}
+
 CONTROL_PANEL_CONTEXT_MARKERS = {
     "chatbot history",
     "api provider",
     "host screen mode",
     "no vnc viewer configured",
     "omniparser",
+}
+
+BROWSER_TASK_KEYWORDS = {
+    "browser",
+    "web",
+    "website",
+    "url",
+    "google",
+    "youtube",
+    "search",
+    "tab",
+    "chrome",
+    "edge",
+    "firefox",
+}
+
+LOCAL_TASK_KEYWORDS = {
+    "file",
+    "folder",
+    "explorer",
+    "desktop",
+    "notepad",
+    "calculator",
+    "settings",
+    "local",
+    "windows",
 }
 
 
@@ -119,6 +153,44 @@ def _screen_has_control_panel_context(parsed_screen: dict) -> bool:
     return any(marker in screen_blob for marker in CONTROL_PANEL_CONTEXT_MARKERS)
 
 
+def _extract_messages_text(messages: list) -> str:
+    parts = []
+    for msg in messages or []:
+        content = msg.get("content", "") if isinstance(msg, dict) else ""
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for entry in content:
+                if isinstance(entry, str):
+                    parts.append(entry)
+                elif isinstance(entry, dict):
+                    text = entry.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+    return "\n".join(parts).lower()
+
+
+def _infer_task_mode(messages: list) -> str:
+    text_blob = _extract_messages_text(messages)
+    browser_hits = sum(1 for kw in BROWSER_TASK_KEYWORDS if kw in text_blob)
+    local_hits = sum(1 for kw in LOCAL_TASK_KEYWORDS if kw in text_blob)
+    return "local" if local_hits > browser_hits else "browser"
+
+
+def _find_box_id_by_keywords(parsed_screen: dict, ordered_keywords: tuple[str, ...]) -> int | None:
+    parsed_items = parsed_screen.get("parsed_content_list", [])
+    if not isinstance(parsed_items, list):
+        return None
+
+    for keyword in ordered_keywords:
+        lowered_keyword = keyword.lower()
+        for idx, elem in enumerate(parsed_items):
+            label = str((elem or {}).get("content", "")).strip().lower()
+            if label and lowered_keyword in label:
+                return idx
+    return None
+
+
 def should_block_box_action(parsed_screen: dict, box_id: int) -> bool:
     parsed_items = parsed_screen.get("parsed_content_list", [])
     if not isinstance(parsed_items, list) or box_id < 0 or box_id >= len(parsed_items):
@@ -138,9 +210,45 @@ def should_block_box_action(parsed_screen: dict, box_id: int) -> bool:
     return False
 
 
-def enforce_safe_next_action(vlm_response_json: dict, parsed_screen: dict) -> dict:
+def enforce_safe_next_action(vlm_response_json: dict, parsed_screen: dict, messages: list) -> dict:
     normalized_action = normalize_next_action(vlm_response_json.get("Next Action", "None"))
     vlm_response_json["Next Action"] = normalized_action
+
+    if _screen_has_control_panel_context(parsed_screen):
+        task_mode = _infer_task_mode(messages)
+        if task_mode == "local":
+            minimize_box_id = _find_box_id_by_keywords(parsed_screen, ("minimize", "minimise"))
+            if minimize_box_id is not None:
+                vlm_response_json["Reasoning"] = (
+                    "Home screen detected and task appears local; minimizing OmniTool before continuing."
+                )
+                vlm_response_json["Next Action"] = "left_click"
+                vlm_response_json["Box ID"] = minimize_box_id
+                vlm_response_json.pop("value", None)
+                return vlm_response_json
+        else:
+            new_tab_box_id = _find_box_id_by_keywords(
+                parsed_screen,
+                ("new tab", "+", "tab", "address", "search"),
+            )
+            if new_tab_box_id is not None:
+                vlm_response_json["Reasoning"] = (
+                    "Home screen detected and task appears browser-based; opening a new browser tab first."
+                )
+                vlm_response_json["Next Action"] = "left_click"
+                vlm_response_json["Box ID"] = new_tab_box_id
+                vlm_response_json.pop("value", None)
+                return vlm_response_json
+
+    # Hard deny blind typing while OmniTool control panel is visible.
+    # This prevents accidentally typing into OmniTool chat/input widgets.
+    if normalized_action == "type" and "Box ID" not in vlm_response_json and _screen_has_control_panel_context(parsed_screen):
+        vlm_response_json["Reasoning"] = (
+            "OmniTool control UI detected; refusing to type without a safe host-screen target."
+        )
+        vlm_response_json["Next Action"] = "wait"
+        vlm_response_json.pop("value", None)
+        return vlm_response_json
 
     if "Box ID" not in vlm_response_json:
         return vlm_response_json
@@ -150,9 +258,9 @@ def enforce_safe_next_action(vlm_response_json: dict, parsed_screen: dict) -> di
     except (TypeError, ValueError):
         return vlm_response_json
 
-    if normalized_action in {"left_click", "right_click", "double_click", "hover"} and should_block_box_action(parsed_screen, box_id):
+    if normalized_action in BOX_ACTIONS and should_block_box_action(parsed_screen, box_id):
         vlm_response_json["Reasoning"] = (
-            "Selected target is part of OmniTool control UI; skipping this element and waiting for the next screen state."
+            "Selected target is part of OmniTool control UI; interaction is strictly forbidden."
         )
         vlm_response_json["Next Action"] = "wait"
         vlm_response_json.pop("Box ID", None)
@@ -315,7 +423,7 @@ class VLMOrchestratedAgent:
         
         vlm_response_json = extract_data(vlm_response, "json")
         vlm_response_json = json.loads(vlm_response_json)
-        vlm_response_json = enforce_safe_next_action(vlm_response_json, parsed_screen)
+        vlm_response_json = enforce_safe_next_action(vlm_response_json, parsed_screen, planner_messages)
 
         img_to_show_base64 = parsed_screen["som_image_base64"]
         if "Box ID" in vlm_response_json:
@@ -459,7 +567,8 @@ Another Example:
 
 IMPORTANT NOTES:
 1. You should only give a single action at a time.
-2. Do not click OmniTool/Gradio control-panel elements (for example: Send, Stop, Chatbot History, API Provider, Host Screen Mode) once the run has started.
+2. Strictly never interact with OmniTool/Gradio control-panel elements once the run has started. This includes click, double click, right click, hover, and type on items such as Send, Stop, Chatbot History, API Provider, Host Screen Mode, and OmniParser chat/input fields.
+3. If the OmniTool home/control screen is detected, use this recovery policy: for local-operation tasks minimize the OmniTool window first; for browser-operation tasks open a new browser tab first.
 
 """
         thinking_model = "r1" in self.model
