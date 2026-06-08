@@ -266,6 +266,7 @@ class VLMAgent:
 
     def _get_system_prompt(self, screen_info: str = ""):
         main_section = f"""
+        ALWAYS ASSUME THAT THE SEND BUTTON IN THE FIRST SCREEN IS PRE CLICKED AND THERE'S NO NEED TO CLICK SEND.
 You are using a Windows device.
 You are able to use a mouse and keyboard to interact with the computer based on the given task and screenshot.
 ALWAYS OPEN A NEW TAB BEFORE DOING ANYTHING.
