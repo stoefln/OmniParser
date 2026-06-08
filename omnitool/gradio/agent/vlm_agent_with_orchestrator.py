@@ -123,6 +123,24 @@ LOCAL_TASK_KEYWORDS = {
     "windows",
 }
 
+ACTIONABLE_LABEL_HINTS = {
+    "new tab",
+    "tab",
+    "address",
+    "search",
+    "go",
+    "open",
+    "submit",
+    "ok",
+    "next",
+    "continue",
+    "apply",
+    "save",
+    "close",
+    "minimize",
+    "minimise",
+}
+
 
 def normalize_next_action(raw_action: str) -> str:
     """Normalize model output to one supported action token."""
@@ -183,12 +201,52 @@ def _find_box_id_by_keywords(parsed_screen: dict, ordered_keywords: tuple[str, .
         return None
 
     for keyword in ordered_keywords:
-        lowered_keyword = keyword.lower()
+        lowered_keyword = keyword.strip().lower()
         for idx, elem in enumerate(parsed_items):
             label = str((elem or {}).get("content", "")).strip().lower()
-            if label and lowered_keyword in label:
+            if not label:
+                continue
+            # Favor exact/near-exact matches over broad substring matches.
+            if label == lowered_keyword:
+                return idx
+            if label.startswith(f"{lowered_keyword} "):
+                return idx
+            if label.endswith(f" {lowered_keyword}"):
                 return idx
     return None
+
+
+def _get_task_tokens(messages: list) -> set[str]:
+    text = _extract_messages_text(messages)
+    return {tok for tok in re.findall(r"[a-z0-9]{3,}", text) if tok not in {"the", "and", "with", "from", "that"}}
+
+
+def _is_keyword_echo_click(messages: list, parsed_screen: dict, box_id: int, action: str) -> bool:
+    if action not in {"left_click", "right_click", "double_click", "hover"}:
+        return False
+
+    parsed_items = parsed_screen.get("parsed_content_list", [])
+    if not isinstance(parsed_items, list) or box_id < 0 or box_id >= len(parsed_items):
+        return False
+
+    label = str((parsed_items[box_id] or {}).get("content", "")).strip().lower()
+    if not label or label == "none":
+        return False
+
+    if any(hint in label for hint in ACTIONABLE_LABEL_HINTS):
+        return False
+
+    label_tokens = {tok for tok in re.findall(r"[a-z0-9]{3,}", label)}
+    if len(label_tokens) < 3:
+        return False
+
+    task_tokens = _get_task_tokens(messages)
+    if not task_tokens:
+        return False
+
+    overlap = len(label_tokens & task_tokens)
+    overlap_ratio = overlap / max(len(label_tokens), 1)
+    return overlap_ratio >= 0.6
 
 
 def should_block_box_action(parsed_screen: dict, box_id: int) -> bool:
@@ -229,7 +287,7 @@ def enforce_safe_next_action(vlm_response_json: dict, parsed_screen: dict, messa
         else:
             new_tab_box_id = _find_box_id_by_keywords(
                 parsed_screen,
-                ("new tab", "+", "tab", "address", "search"),
+                ("new tab",),
             )
             if new_tab_box_id is not None:
                 vlm_response_json["Reasoning"] = (
@@ -256,6 +314,15 @@ def enforce_safe_next_action(vlm_response_json: dict, parsed_screen: dict, messa
     try:
         box_id = int(vlm_response_json["Box ID"])
     except (TypeError, ValueError):
+        return vlm_response_json
+
+    if _is_keyword_echo_click(messages, parsed_screen, box_id, normalized_action):
+        vlm_response_json["Reasoning"] = (
+            "Selected element appears to mirror task keywords rather than a concrete UI control; taking no-op to avoid misclick."
+        )
+        vlm_response_json["Next Action"] = "wait"
+        vlm_response_json.pop("Box ID", None)
+        vlm_response_json.pop("value", None)
         return vlm_response_json
 
     if normalized_action in BOX_ACTIONS and should_block_box_action(parsed_screen, box_id):
@@ -569,6 +636,7 @@ IMPORTANT NOTES:
 1. You should only give a single action at a time.
 2. Strictly never interact with OmniTool/Gradio control-panel elements once the run has started. This includes click, double click, right click, hover, and type on items such as Send, Stop, Chatbot History, API Provider, Host Screen Mode, and OmniParser chat/input fields.
 3. If the OmniTool home/control screen is detected, use this recovery policy: for local-operation tasks minimize the OmniTool window first; for browser-operation tasks open a new browser tab first.
+4. Do not click a text element only because it lexically matches words in the user request. Prefer concrete controls (address bar, input fields, buttons, tabs, menus) that advance the task state.
 
 """
         thinking_model = "r1" in self.model
