@@ -266,11 +266,10 @@ class VLMAgent:
 
     def _get_system_prompt(self, screen_info: str = ""):
         main_section = f"""
-        ALWAYS ASSUME THAT THE SEND BUTTON IN THE FIRST SCREEN IS PRE CLICKED AND THERE'S NO NEED TO CLICK SEND.
 You are using a Windows device.
-You are able to use a mouse and keyboard to interact with the computer based on the given task and screenshot.
-ALWAYS OPEN A NEW TAB BEFORE DOING ANYTHING.
-Minimize the current window if you need to interact with the desktop.
+You are able to use a mouse and keyboard to interact with any application or part of the system, including the desktop, file explorer, system settings, applications, and the browser.
+NEVER interact with the OmniParser window itself. ALWAYS open a new window (e.g. a new browser window, application window, or file explorer window) as the very first action before doing anything else.
+Minimize or move out of the way any window that blocks access to what you need.
 You may be given some history plan and actions, this is the response from the previous loop.
 You should carefully consider your plan base on the task, screenshot, and history actions.
 
