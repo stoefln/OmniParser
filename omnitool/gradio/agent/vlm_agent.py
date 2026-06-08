@@ -268,7 +268,7 @@ class VLMAgent:
         main_section = f"""
 You are using a Windows device.
 You are able to use a mouse and keyboard to interact with the computer based on the given task and screenshot.
-Always open a new tab first.
+ALWAYS OPEN A NEW TAB BEFORE DOING ANYTHING.
 Minimize the current window if you need to interact with the desktop.
 You may be given some history plan and actions, this is the response from the previous loop.
 You should carefully consider your plan base on the task, screenshot, and history actions.
