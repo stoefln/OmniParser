@@ -18,6 +18,7 @@ import time
 import re
 
 VALID_NEXT_ACTIONS = {
+    "key",
     "type",
     "left_click",
     "right_click",
@@ -202,6 +203,11 @@ class VLMAgent:
         vlm_response_json = extract_data(vlm_response, "json")
         vlm_response_json = json.loads(vlm_response_json)
         vlm_response_json = enforce_safe_next_action(vlm_response_json, parsed_screen)
+        if self.step_count == 1:
+            vlm_response_json.pop("Box ID", None)
+            vlm_response_json.pop("box_centroid_coordinate", None)
+            vlm_response_json["Next Action"] = "key"
+            vlm_response_json["value"] = "ctrl+n"
 
         img_to_show_base64 = parsed_screen["som_image_base64"]
         if "Box ID" in vlm_response_json:
@@ -248,6 +254,11 @@ class VLMAgent:
 
         if vlm_response_json["Next Action"] == "None":
             print("Task paused/completed.")
+        elif vlm_response_json["Next Action"] == "key":
+            sim_content_block = BetaToolUseBlock(id=f'toolu_{uuid.uuid4()}',
+                                        input={'action': 'key', 'text': vlm_response_json.get("value", "")},
+                                        name='computer', type='tool_use')
+            response_content.append(sim_content_block)
         elif vlm_response_json["Next Action"] == "type":
             sim_content_block = BetaToolUseBlock(id=f'toolu_{uuid.uuid4()}',
                                         input={'action': vlm_response_json["Next Action"], 'text': vlm_response_json.get("value", "")},
@@ -268,7 +279,8 @@ class VLMAgent:
         main_section = f"""
 You are using a Windows device.
 You are able to use a mouse and keyboard to interact with any application or part of the system, including the desktop, file explorer, system settings, applications, and the browser.
-NEVER interact with the OmniParser window itself. ALWAYS open a new window (e.g. a new browser window, application window, or file explorer window) as the very first action before doing anything else.
+NEVER interact with the OmniParser control window or its Send button.
+On the very first step, do not click anything in the current OmniParser window. Use a keyboard shortcut or other OS-level action to open or switch to a new target window first.
 Minimize or move out of the way any window that blocks access to what you need.
 You may be given some history plan and actions, this is the response from the previous loop.
 You should carefully consider your plan base on the task, screenshot, and history actions.
@@ -276,6 +288,7 @@ You should carefully consider your plan base on the task, screenshot, and histor
 Here is the list of all detected bounding boxes by IDs on the screen and their description:{screen_info}
 
 Your available "Next Action" only include:
+- key: presses a keyboard shortcut or single key; use the value field for the key sequence, for example "win", "win+r", "alt+tab", or "ctrl+l".
 - type: types a string of text.
 - left_click: move mouse to box id and left clicks.
 - right_click: move mouse to box id and right clicks.
@@ -291,9 +304,9 @@ Output format:
 ```json
 {{
     "Reasoning": str, # describe what is in the current screen, taking into account the history, then describe your step-by-step thoughts on how to achieve the task, choose one action from available actions at a time.
-    "Next Action": "type" | "left_click" | "right_click" | "double_click" | "hover" | "scroll_up" | "scroll_down" | "wait" | "None" # output only one exact token; do not add explanations or punctuation in this field.
+    "Next Action": "key" | "type" | "left_click" | "right_click" | "double_click" | "hover" | "scroll_up" | "scroll_down" | "wait" | "None" # output only one exact token; do not add explanations or punctuation in this field.
     "Box ID": n,
-    "value": "xxx" # only provide value field if the action is type, else don't include value key
+    "value": "xxx" # only provide value field if the action is type or key, else don't include value key
 }}
 ```
 
@@ -328,20 +341,21 @@ IMPORTANT NOTES:
         if not thinking_model:
             main_section += """
 7. You should give an analysis to the current screen and history, then choose only the immediate next action.
+8. Keyboard shortcuts are allowed only through the "key" action.
 
 """
         else:
             main_section += """
 7. In <think> XML tags give a brief analysis of current screen and history, then choose only the immediate next action. In <output> XML tags put the next action prediction JSON.
+8. Keyboard shortcuts are allowed only through the "key" action.
 
 """
         main_section += """
 9. Attach the next action prediction in the "Next Action".
-10. You should not include other actions, such as keyboard shortcuts.
-11. When the task is completed, don't complete additional actions. You should say "Next Action": "None" in the json field.
-12. Break multi-step tasks into subgoals and execute one subgoal at a time in user-requested order.
-13. Avoid choosing the same action/element multiple times in a row. If repetition occurs, pick a different corrective action.
-14. If you are prompted with login, captcha, or anything requiring user permission, return "Next Action": "None".
+10. When the task is completed, don't complete additional actions. You should say "Next Action": "None" in the json field.
+11. Break multi-step tasks into subgoals and execute one subgoal at a time in user-requested order.
+12. Avoid choosing the same action/element multiple times in a row. If repetition occurs, pick a different corrective action.
+13. If you are prompted with login, captcha, or anything requiring user permission, return "Next Action": "None".
 """ 
 
         return main_section
