@@ -203,11 +203,6 @@ class VLMAgent:
         vlm_response_json = extract_data(vlm_response, "json")
         vlm_response_json = json.loads(vlm_response_json)
         vlm_response_json = enforce_safe_next_action(vlm_response_json, parsed_screen)
-        if self.step_count == 1:
-            vlm_response_json.pop("Box ID", None)
-            vlm_response_json.pop("box_centroid_coordinate", None)
-            vlm_response_json["Next Action"] = "key"
-            vlm_response_json["value"] = "ctrl+n"
 
         img_to_show_base64 = parsed_screen["som_image_base64"]
         if "Box ID" in vlm_response_json:

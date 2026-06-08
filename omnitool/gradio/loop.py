@@ -1,6 +1,7 @@
 """
 Agentic sampling loop that calls the Anthropic API and local implenmentation of anthropic-defined computer use tools.
 """
+import asyncio
 from collections.abc import Callable
 from enum import StrEnum
 
@@ -20,6 +21,7 @@ from agent.anthropic_agent import AnthropicActor
 from agent.vlm_agent import VLMAgent
 from agent.vlm_agent_with_orchestrator import VLMOrchestratedAgent
 from executor.anthropic_executor import AnthropicExecutor
+from tools import ComputerTool
 
 BETA_FLAG = "computer-use-2024-10-22"
 
@@ -93,6 +95,8 @@ def sampling_loop_sync(
         output_callback=output_callback,
         tool_output_callback=tool_output_callback,
     )
+    computer_tool = ComputerTool()
+    asyncio.run(computer_tool(action="key", text="ctrl+n"))
     print(f"Model Inited: {model}, Provider: {provider}")
     
     tool_result_content = None
