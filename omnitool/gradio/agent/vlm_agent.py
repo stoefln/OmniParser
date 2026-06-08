@@ -29,81 +29,6 @@ VALID_NEXT_ACTIONS = {
     "none",
 }
 
-CONTROL_PANEL_STRONG_KEYWORDS = {
-    "gradio",
-    "omniparser",
-    "api provider",
-    "chatbot history",
-    "host screen mode",
-    "no vnc viewer configured",
-    "type a message to send to omniparser",
-}
-
-CONTROL_PANEL_WEAK_KEYWORDS = {
-    "send",
-    "stop",
-}
-
-BOX_ACTIONS = {
-    "left_click",
-    "right_click",
-    "double_click",
-    "hover",
-    "type",
-}
-
-CONTROL_PANEL_CONTEXT_MARKERS = {
-    "chatbot history",
-    "api provider",
-    "host screen mode",
-    "no vnc viewer configured",
-    "omniparser",
-}
-
-BROWSER_TASK_KEYWORDS = {
-    "browser",
-    "web",
-    "website",
-    "url",
-    "google",
-    "youtube",
-    "search",
-    "tab",
-    "chrome",
-    "edge",
-    "firefox",
-}
-
-LOCAL_TASK_KEYWORDS = {
-    "file",
-    "folder",
-    "explorer",
-    "desktop",
-    "notepad",
-    "calculator",
-    "settings",
-    "local",
-    "windows",
-}
-
-ACTIONABLE_LABEL_HINTS = {
-    "new tab",
-    "tab",
-    "address",
-    "search",
-    "go",
-    "open",
-    "submit",
-    "ok",
-    "next",
-    "continue",
-    "apply",
-    "save",
-    "close",
-    "minimize",
-    "minimise",
-}
-
 
 def normalize_next_action(raw_action: str) -> str:
     """Normalize model output to one supported action token."""
@@ -131,172 +56,16 @@ def normalize_next_action(raw_action: str) -> str:
     return "None"
 
 
-def _screen_has_control_panel_context(parsed_screen: dict) -> bool:
-    screen_blob = str(parsed_screen.get("screen_info", "")).lower()
-    return any(marker in screen_blob for marker in CONTROL_PANEL_CONTEXT_MARKERS)
-
-
-def _extract_messages_text(messages: list) -> str:
-    parts = []
-    for msg in messages or []:
-        content = msg.get("content", "") if isinstance(msg, dict) else ""
-        if isinstance(content, str):
-            parts.append(content)
-        elif isinstance(content, list):
-            for entry in content:
-                if isinstance(entry, str):
-                    parts.append(entry)
-                elif isinstance(entry, dict):
-                    text = entry.get("text")
-                    if isinstance(text, str):
-                        parts.append(text)
-    return "\n".join(parts).lower()
-
-
-def _infer_task_mode(messages: list) -> str:
-    text_blob = _extract_messages_text(messages)
-    browser_hits = sum(1 for kw in BROWSER_TASK_KEYWORDS if kw in text_blob)
-    local_hits = sum(1 for kw in LOCAL_TASK_KEYWORDS if kw in text_blob)
-    return "local" if local_hits > browser_hits else "browser"
-
-
-def _find_box_id_by_keywords(parsed_screen: dict, ordered_keywords: tuple[str, ...]) -> int | None:
-    parsed_items = parsed_screen.get("parsed_content_list", [])
-    if not isinstance(parsed_items, list):
-        return None
-
-    for keyword in ordered_keywords:
-        lowered_keyword = keyword.strip().lower()
-        for idx, elem in enumerate(parsed_items):
-            label = str((elem or {}).get("content", "")).strip().lower()
-            if not label:
-                continue
-            # Favor exact/near-exact matches over broad substring matches.
-            if label == lowered_keyword:
-                return idx
-            if label.startswith(f"{lowered_keyword} "):
-                return idx
-            if label.endswith(f" {lowered_keyword}"):
-                return idx
-    return None
-
-
-def _get_task_tokens(messages: list) -> set[str]:
-    text = _extract_messages_text(messages)
-    return {tok for tok in re.findall(r"[a-z0-9]{3,}", text) if tok not in {"the", "and", "with", "from", "that"}}
-
-
-def _is_keyword_echo_click(messages: list, parsed_screen: dict, box_id: int, action: str) -> bool:
-    if action not in {"left_click", "right_click", "double_click", "hover"}:
-        return False
-
-    parsed_items = parsed_screen.get("parsed_content_list", [])
-    if not isinstance(parsed_items, list) or box_id < 0 or box_id >= len(parsed_items):
-        return False
-
-    label = str((parsed_items[box_id] or {}).get("content", "")).strip().lower()
-    if not label or label == "none":
-        return False
-
-    if any(hint in label for hint in ACTIONABLE_LABEL_HINTS):
-        return False
-
-    label_tokens = {tok for tok in re.findall(r"[a-z0-9]{3,}", label)}
-    if len(label_tokens) < 3:
-        return False
-
-    task_tokens = _get_task_tokens(messages)
-    if not task_tokens:
-        return False
-
-    overlap = len(label_tokens & task_tokens)
-    overlap_ratio = overlap / max(len(label_tokens), 1)
-    return overlap_ratio >= 0.6
-
-
-def should_block_box_action(parsed_screen: dict, box_id: int) -> bool:
-    parsed_items = parsed_screen.get("parsed_content_list", [])
-    if not isinstance(parsed_items, list) or box_id < 0 or box_id >= len(parsed_items):
-        return False
-
-    elem = parsed_items[box_id] or {}
-    label = str(elem.get("content", "")).strip().lower()
-    if not label or label == "none":
-        return False
-
-    if any(keyword in label for keyword in CONTROL_PANEL_STRONG_KEYWORDS):
-        return True
-
-    if any(keyword == label for keyword in CONTROL_PANEL_WEAK_KEYWORDS):
-        return _screen_has_control_panel_context(parsed_screen)
-
-    return False
-
-
-def enforce_safe_next_action(vlm_response_json: dict, parsed_screen: dict, messages: list) -> dict:
+def enforce_safe_next_action(vlm_response_json: dict, parsed_screen: dict) -> dict:
     normalized_action = normalize_next_action(vlm_response_json.get("Next Action", "None"))
     vlm_response_json["Next Action"] = normalized_action
 
-    if _screen_has_control_panel_context(parsed_screen):
-        task_mode = _infer_task_mode(messages)
-        if task_mode == "local":
-            minimize_box_id = _find_box_id_by_keywords(parsed_screen, ("minimize", "minimise"))
-            if minimize_box_id is not None:
-                vlm_response_json["Reasoning"] = (
-                    "Home screen detected and task appears local; minimizing OmniTool before continuing."
-                )
-                vlm_response_json["Next Action"] = "left_click"
-                vlm_response_json["Box ID"] = minimize_box_id
-                vlm_response_json.pop("value", None)
-                return vlm_response_json
-        else:
-            new_tab_box_id = _find_box_id_by_keywords(
-                parsed_screen,
-                ("new tab", "+", "tab", "address", "search"),
-            )
-            if new_tab_box_id is not None:
-                vlm_response_json["Reasoning"] = (
-                    "Home screen detected and task appears browser-based; opening a new browser tab first."
-                )
-                vlm_response_json["Next Action"] = "left_click"
-                vlm_response_json["Box ID"] = new_tab_box_id
-                vlm_response_json.pop("value", None)
-                return vlm_response_json
-
-    # Hard deny blind typing while OmniTool control panel is visible.
-    # This prevents accidentally typing into OmniTool chat/input widgets.
-    if normalized_action == "type" and "Box ID" not in vlm_response_json and _screen_has_control_panel_context(parsed_screen):
-        vlm_response_json["Reasoning"] = (
-            "OmniTool control UI detected; refusing to type without a safe host-screen target."
-        )
-        vlm_response_json["Next Action"] = "wait"
-        vlm_response_json.pop("value", None)
-        return vlm_response_json
-
-    if "Box ID" not in vlm_response_json:
-        return vlm_response_json
-
-    try:
-        box_id = int(vlm_response_json["Box ID"])
-    except (TypeError, ValueError):
-        return vlm_response_json
-
-    if _is_keyword_echo_click(messages, parsed_screen, box_id, normalized_action):
-        vlm_response_json["Reasoning"] = (
-            "Selected element appears to mirror task keywords rather than a concrete UI control; taking no-op to avoid misclick."
-        )
-        vlm_response_json["Next Action"] = "wait"
-        vlm_response_json.pop("Box ID", None)
-        vlm_response_json.pop("value", None)
-        return vlm_response_json
-
-    if normalized_action in BOX_ACTIONS and should_block_box_action(parsed_screen, box_id):
-        vlm_response_json["Reasoning"] = (
-            "Selected target is part of OmniTool control UI; interaction is strictly forbidden."
-        )
-        vlm_response_json["Next Action"] = "wait"
-        vlm_response_json.pop("Box ID", None)
-        vlm_response_json.pop("value", None)
+    # Keep Box ID as an integer when present so executor parsing stays stable.
+    if "Box ID" in vlm_response_json:
+        try:
+            vlm_response_json["Box ID"] = int(vlm_response_json["Box ID"])
+        except (TypeError, ValueError):
+            vlm_response_json.pop("Box ID", None)
 
     return vlm_response_json
 
@@ -432,7 +201,7 @@ class VLMAgent:
         
         vlm_response_json = extract_data(vlm_response, "json")
         vlm_response_json = json.loads(vlm_response_json)
-        vlm_response_json = enforce_safe_next_action(vlm_response_json, parsed_screen, planner_messages)
+        vlm_response_json = enforce_safe_next_action(vlm_response_json, parsed_screen)
 
         img_to_show_base64 = parsed_screen["som_image_base64"]
         if "Box ID" in vlm_response_json:
@@ -562,8 +331,7 @@ IMPORTANT NOTES:
 4. "Box ID" should be included only when clicking/hovering a specific element. For scroll/wait/None, omit "Box ID".
 5. If the user asks to watch a video (for example YouTube highlights), prioritize browser actions: focus search/input, type the query, submit, then click a relevant video result.
 6. Do not interact with a page chatbot unless the task explicitly asks for chatting with that bot.
-7. Strictly never interact with OmniTool/Gradio control-panel elements once the run has started. This includes click, double click, right click, hover, and type on items such as Send, Stop, Chatbot History, API Provider, Host Screen Mode, and OmniParser chat/input fields.
-8. If the OmniTool home/control screen is detected, use this recovery policy: for local-operation tasks minimize the OmniTool window first; for browser-operation tasks open a new browser tab first.
+7. Choose actions by visual grounding and current UI state, not by matching words from prior text.
 
 """
         thinking_model = "r1" in self.model
@@ -584,7 +352,6 @@ IMPORTANT NOTES:
 12. Break multi-step tasks into subgoals and execute one subgoal at a time in user-requested order.
 13. Avoid choosing the same action/element multiple times in a row. If repetition occurs, pick a different corrective action.
 14. If you are prompted with login, captcha, or anything requiring user permission, return "Next Action": "None".
-15. Do not click a text element only because it lexically matches words in the user request. Prefer concrete controls (address bar, input fields, buttons, tabs, menus) that advance the task state.
 """ 
 
         return main_section
