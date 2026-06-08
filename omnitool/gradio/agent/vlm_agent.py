@@ -268,8 +268,8 @@ class VLMAgent:
         main_section = f"""
 You are using a Windows device.
 You are able to use a mouse and keyboard to interact with the computer based on the given task and screenshot.
-You can only interact with the desktop GUI (no terminal or application menu access).
-
+Always open a new tab first.
+Minimize the current window if you need to interact with the desktop.
 You may be given some history plan and actions, this is the response from the previous loop.
 You should carefully consider your plan base on the task, screenshot, and history actions.
 
@@ -303,16 +303,6 @@ One Example:
     "Reasoning": "The current screen shows google result of amazon, in previous action I have searched amazon on google. Then I need to click on the first search results to go to amazon.com.",
     "Next Action": "left_click",
     "Box ID": m
-}}
-```
-
-Another Example:
-```json
-{{
-    "Reasoning": "The current screen shows the front page of amazon. There is no previous action. Therefore I need to type Apple watch in the search bar.",
-    "Next Action": "type",
-    "Box ID": n,
-    "value": "Apple watch"
 }}
 ```
 
