@@ -1,0 +1,86 @@
+[
+  {
+    "action": "mouse_move",
+    "ok": true,
+    "output": "Moved mouse to (50, 50)",
+    "has_image": false
+  },
+  {
+    "action": "cursor_position",
+    "ok": true,
+    "output": "X=36,Y=36",
+    "has_image": false
+  },
+  {
+    "action": "left_click",
+    "ok": true,
+    "output": "Performed left_click",
+    "has_image": false
+  },
+  {
+    "action": "double_click",
+    "ok": true,
+    "output": "Performed double_click",
+    "has_image": false
+  },
+  {
+    "action": "right_click",
+    "ok": true,
+    "output": "Performed right_click",
+    "has_image": false
+  },
+  {
+    "action": "key_escape",
+    "ok": true,
+    "output": "Pressed keys: Escape",
+    "has_image": false
+  },
+  {
+    "action": "middle_click",
+    "ok": true,
+    "output": "Performed middle_click",
+    "has_image": false
+  },
+  {
+    "action": "left_click_drag",
+    "ok": true,
+    "output": "Dragged mouse from (50, 50) to (140, 140)",
+    "has_image": false
+  },
+  {
+    "action": "scroll_up",
+    "ok": true,
+    "output": "Performed scroll_up",
+    "has_image": false
+  },
+  {
+    "action": "scroll_down",
+    "ok": true,
+    "output": "Performed scroll_down",
+    "has_image": false
+  },
+  {
+    "action": "hover",
+    "ok": true,
+    "output": "Performed hover",
+    "has_image": false
+  },
+  {
+    "action": "wait",
+    "ok": true,
+    "output": "Performed wait",
+    "has_image": false
+  },
+  {
+    "action": "type",
+    "ok": true,
+    "output": "omnitool_action_test",
+    "has_image": true
+  },
+  {
+    "action": "screenshot",
+    "ok": true,
+    "output": null,
+    "has_image": true
+  }
+]
