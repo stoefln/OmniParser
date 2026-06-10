@@ -7,6 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -76,6 +77,7 @@ class OmniParserSettings:
 
 class ParseRequest(BaseModel):
     base64_image: str
+    include_image: bool = False
 
 
 class OmniParserRuntime:
@@ -116,16 +118,35 @@ class OmniParserRuntime:
             "caption_model_path": self.settings.caption_model_path,
         }
 
-    def parse_image(self, image_base64: str) -> dict:
+    def parse_image(self, image_base64: str, include_image: bool = False) -> dict[str, Any]:
+        total_start = time.time()
+
+        validate_start = time.time()
         self._validate_image(image_base64)
+        validate_duration = time.time() - validate_start
+
+        init_start = time.time()
         parser = self.ensure_initialized()
-        start = time.time()
-        som_image_base64, parsed_content_list = parser.parse(image_base64)
-        return {
-            "som_image_base64": som_image_base64,
-            "parsed_content_list": parsed_content_list,
-            "latency": time.time() - start,
+        init_duration = time.time() - init_start
+
+        parse_start = time.time()
+        parse_result = parser.parse(image_base64, include_image=include_image)
+        parse_duration = time.time() - parse_start
+
+        response = {
+            "parsed_content_list": parse_result["parsed_content_list"],
+            "latency": parse_duration,
+            "timings": {
+                "validate_s": validate_duration,
+                "init_s": init_duration,
+                "parse_s": parse_duration,
+                "total_s": time.time() - total_start,
+                **parse_result["timings"],
+            },
         }
+        if parse_result["som_image_base64"] is not None:
+            response["som_image_base64"] = parse_result["som_image_base64"]
+        return response
 
     @staticmethod
     def _validate_image(image_base64: str) -> None:
@@ -170,7 +191,7 @@ def create_app(runtime: OmniParserRuntime) -> FastAPI:
     @app.post("/parse/")
     async def parse(parse_request: ParseRequest):
         try:
-            return runtime.parse_image(parse_request.base64_image)
+            return runtime.parse_image(parse_request.base64_image, include_image=parse_request.include_image)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:

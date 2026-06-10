@@ -408,7 +408,7 @@ def int_box_area(box, w, h):
     area = (int_box[2] - int_box[0]) * (int_box[3] - int_box[1])
     return area
 
-def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_TRESHOLD=0.01, output_coord_in_ratio=False, ocr_bbox=None, text_scale=0.4, text_padding=5, draw_bbox_config=None, caption_model_processor=None, ocr_text=[], use_local_semantics=True, iou_threshold=0.9,prompt=None, scale_img=False, imgsz=None, batch_size=128, device=None):
+def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_TRESHOLD=0.01, output_coord_in_ratio=False, ocr_bbox=None, text_scale=0.4, text_padding=5, draw_bbox_config=None, caption_model_processor=None, ocr_text=[], use_local_semantics=True, iou_threshold=0.9,prompt=None, scale_img=False, imgsz=None, batch_size=128, device=None, include_image=False):
     """Process either an image path or Image object
     
     Args:
@@ -422,7 +422,9 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
     if not imgsz:
         imgsz = (h, w)
     # print('image size:', w, h)
+    yolo_start = time.time()
     xyxy, logits, phrases = predict_yolo(model=model, image=image_source, box_threshold=BOX_TRESHOLD, imgsz=imgsz, scale_img=scale_img, iou_threshold=0.1, device=device)
+    yolo_duration = time.time() - yolo_start
     xyxy = xyxy / torch.Tensor([w, h, w, h]).to(xyxy.device)
     image_source = np.asarray(image_source)
     phrases = [str(i) for i in range(len(phrases))]
@@ -451,6 +453,7 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
     print('len(filtered_boxes):', len(filtered_boxes), starting_idx)
 
     # get parsed icon local semantics
+    caption_duration = 0.0
     time1 = time.time()
     if use_local_semantics:
         caption_model = caption_model_processor['model']
@@ -458,6 +461,7 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
             parsed_content_icon = get_parsed_content_icon_phi3v(filtered_boxes, ocr_bbox, image_source, caption_model_processor)
         else:
             parsed_content_icon = get_parsed_content_icon(filtered_boxes, starting_idx, image_source, caption_model_processor, prompt=prompt,batch_size=batch_size)
+        caption_duration = time.time() - time1
         ocr_text = [f"Text Box ID {i}: {txt}" for i, txt in enumerate(ocr_text)]
         icon_start = len(ocr_text)
         parsed_content_icon_ls = []
@@ -471,27 +475,44 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
     else:
         ocr_text = [f"Text Box ID {i}: {txt}" for i, txt in enumerate(ocr_text)]
         parsed_content_merged = ocr_text
-    print('time to get parsed content:', time.time()-time1)
+    print('time to get parsed content:', caption_duration)
 
     filtered_boxes = box_convert(boxes=filtered_boxes, in_fmt="xyxy", out_fmt="cxcywh")
 
     phrases = [i for i in range(len(filtered_boxes))]
-    
-    # draw boxes
-    if draw_bbox_config:
-        annotated_frame, label_coordinates = annotate(image_source=image_source, boxes=filtered_boxes, logits=logits, phrases=phrases, **draw_bbox_config)
+
+    annotate_duration = 0.0
+    encode_duration = 0.0
+    encoded_image = None
+
+    if include_image:
+        annotate_start = time.time()
+        if draw_bbox_config:
+            annotated_frame, label_coordinates = annotate(image_source=image_source, boxes=filtered_boxes, logits=logits, phrases=phrases, **draw_bbox_config)
+        else:
+            annotated_frame, label_coordinates = annotate(image_source=image_source, boxes=filtered_boxes, logits=logits, phrases=phrases, text_scale=text_scale, text_padding=text_padding)
+        annotate_duration = time.time() - annotate_start
+
+        encode_start = time.time()
+        pil_img = Image.fromarray(annotated_frame)
+        buffered = io.BytesIO()
+        pil_img.save(buffered, format="PNG")
+        encoded_image = base64.b64encode(buffered.getvalue()).decode('ascii')
+        encode_duration = time.time() - encode_start
     else:
-        annotated_frame, label_coordinates = annotate(image_source=image_source, boxes=filtered_boxes, logits=logits, phrases=phrases, text_scale=text_scale, text_padding=text_padding)
-    
-    pil_img = Image.fromarray(annotated_frame)
-    buffered = io.BytesIO()
-    pil_img.save(buffered, format="PNG")
-    encoded_image = base64.b64encode(buffered.getvalue()).decode('ascii')
+        label_coordinates = {f"{phrase}": v for phrase, v in zip(phrases, box_convert(boxes=filtered_boxes, in_fmt="cxcywh", out_fmt="xywh").numpy())}
+
     if output_coord_in_ratio:
         label_coordinates = {k: [v[0]/w, v[1]/h, v[2]/w, v[3]/h] for k, v in label_coordinates.items()}
-        assert w == annotated_frame.shape[1] and h == annotated_frame.shape[0]
+        if include_image:
+            assert w == annotated_frame.shape[1] and h == annotated_frame.shape[0]
 
-    return encoded_image, label_coordinates, filtered_boxes_elem
+    return encoded_image, label_coordinates, filtered_boxes_elem, {
+        'yolo_s': yolo_duration,
+        'caption_s': caption_duration,
+        'annotate_s': annotate_duration,
+        'encode_image_s': encode_duration,
+    }
 
 
 def get_xywh(input):

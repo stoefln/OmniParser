@@ -112,6 +112,14 @@ curl -sS -X POST http://127.0.0.1:8001/parse/ \
   --data "{\"base64_image\":\"$image_base64\"}"
 ```
 
+To include the annotated debug image in the response, set `include_image` explicitly:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8001/parse/ \
+  -H 'Content-Type: application/json' \
+  --data "{\"base64_image\":\"$image_base64\",\"include_image\":true}"
+```
+
 Notes:
 
 - `OMNIPARSER_PRELOAD=false` gets the API up immediately and shifts model initialization to the first parse request.
@@ -153,7 +161,7 @@ docker push YOUR_DOCKERHUB_USER/omniparser-runpod:latest
 }
 ```
 
-The serverless handler returns the same parsing payload as the HTTP API: `som_image_base64`, `parsed_content_list`, and `latency`.
+The serverless handler returns the same parsing payload as the HTTP API. `parsed_content_list`, `latency`, and a detailed `timings` breakdown are always included. `som_image_base64` is now optional and is only returned when `include_image` is set to `true`.
 
 ### Runtime configuration
 

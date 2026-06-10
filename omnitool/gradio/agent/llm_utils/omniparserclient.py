@@ -15,7 +15,7 @@ class OmniParserClient:
         screenshot, screenshot_path = get_screenshot()
         screenshot_path = str(screenshot_path)
         image_base64 = encode_image(screenshot_path)
-        response = requests.post(self.url, json={"base64_image": image_base64})
+        response = requests.post(self.url, json={"base64_image": image_base64, "include_image": True})
         response_json = response.json()
         print('omniparser latency:', response_json['latency'])
 

@@ -23,8 +23,9 @@ async def handler(event: dict) -> dict:
     image_base64 = input_payload.get("base64_image")
     if not image_base64:
         raise ValueError("input.base64_image is required")
+    include_image = bool(input_payload.get("include_image", False))
 
-    return runtime.parse_image(image_base64)
+    return runtime.parse_image(image_base64, include_image=include_image)
 
 
 if __name__ == "__main__":

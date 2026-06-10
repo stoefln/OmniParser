@@ -6,6 +6,7 @@ weights/icon_detect_v1_5_2/
 .gradio
 .venv/
 .venv311/
+.runpod-api-key
 __pycache__/
 debug.ipynb
 util/__pycache__/
