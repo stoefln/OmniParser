@@ -57,11 +57,18 @@ def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2
     elif model_name == "florence2":
         from transformers import AutoProcessor, AutoModelForCausalLM 
         processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base-ft", trust_remote_code=True)
-        if not use_half_precision:
-            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float32, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name_or_path,
+            torch_dtype=torch.float32,
+            trust_remote_code=True,
+        )
+        if use_half_precision:
+            # Florence builds some tensors during model construction on CPU.
+            # Load in float32 first, then cast after moving onto CUDA.
+            model = model.to(device=device, dtype=torch.float16)
         else:
-            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float16, trust_remote_code=True).to(device)
-    return {'model': model.to(device), 'processor': processor}
+            model = model.to(device)
+    return {'model': model if model_name == "florence2" else model.to(device), 'processor': processor}
 
 
 def get_yolo_model(model_path, device=None):
