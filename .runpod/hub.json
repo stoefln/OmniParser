@@ -1,0 +1,43 @@
+{
+  "title": "OmniParser",
+  "description": "GPU-backed screenshot parsing service that returns labeled UI elements and structured content.",
+  "type": "serverless",
+  "category": "image",
+  "iconUrl": "https://example.com/icon.png",
+  "config": {
+    "runsOn": "GPU",
+    "containerDiskInGb": 20,
+    "presets": [
+      {
+        "name": "Default GPU Parser",
+        "defaults": {
+          "OMNIPARSER_DEVICE": "cuda",
+          "OMNIPARSER_BOX_THRESHOLD": "0.05"
+        }
+      }
+    ],
+    "env": [
+      {
+        "key": "MODE_TO_RUN",
+        "value": "serverless"
+      },
+      {
+        "key": "OMNIPARSER_DEVICE",
+        "value": "cuda"
+      },
+      {
+        "key": "OMNIPARSER_PRELOAD",
+        "value": "true"
+      },
+      {
+        "key": "OMNIPARSER_BOX_THRESHOLD",
+        "input": {
+          "name": "Box Threshold",
+          "type": "string",
+          "description": "Detection threshold used when generating UI element boxes.",
+          "default": "0.05"
+        }
+      }
+    ]
+  }
+}

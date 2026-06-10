@@ -1,0 +1,40 @@
+{
+  "tests": [
+    {
+      "name": "parse_sample_image",
+      "input": {
+        "base64_image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII="
+      },
+      "timeout": 120000
+    }
+  ],
+  "config": {
+    "gpuTypeId": "NVIDIA GeForce RTX 4090",
+    "gpuCount": 1,
+    "env": [
+      {
+        "key": "MODE_TO_RUN",
+        "value": "serverless"
+      },
+      {
+        "key": "OMNIPARSER_DEVICE",
+        "value": "cuda"
+      },
+      {
+        "key": "OMNIPARSER_PRELOAD",
+        "value": "true"
+      }
+    ],
+    "allowedCudaVersions": [
+      "11.8",
+      "12.7",
+      "12.6",
+      "12.5",
+      "12.4",
+      "12.3",
+      "12.2",
+      "12.1",
+      "12.0"
+    ]
+  }
+}

@@ -61,6 +61,113 @@ To run gradio demo, simply run:
 python gradio_demo.py
 ```
 
+## Local Apple Silicon Run
+
+On Apple Silicon Macs, you can run the parser natively with PyTorch MPS instead of Docker. This is the practical local GPU path on macOS.
+
+### One-time setup
+
+Create a Python 3.11 virtual environment and install the parser-serving dependencies:
+
+```bash
+/opt/homebrew/bin/python3.11 -m venv .venv311
+.venv311/bin/pip install --upgrade pip setuptools wheel
+.venv311/bin/pip install -r requirements-runpod.txt
+```
+
+Populate the local `weights/` directory. If you already built the Docker image from this repo, you can reuse the baked weights instead of downloading them again:
+
+```bash
+cid=$(docker create omniparser-runpod:test)
+rm -rf weights
+mkdir -p weights
+docker cp "$cid":/app/weights/. ./weights
+docker rm "$cid"
+```
+
+If you do not have the Docker image locally, download the weights from Hugging Face as described in the install section above.
+
+### Start the local MPS server
+
+Use the helper script:
+
+```bash
+./scripts/run-local-mps.sh
+```
+
+Or run the server directly:
+
+```bash
+PYTHONUNBUFFERED=1 OMNIPARSER_DEVICE=mps OMNIPARSER_PORT=8001 OMNIPARSER_PRELOAD=false .venv311/bin/python omnitool/omniparserserver/omniparserserver.py --host 127.0.0.1 --port 8001 --device mps
+```
+
+### Validate locally
+
+```bash
+curl -sS http://127.0.0.1:8001/probe/
+
+image_base64=$(base64 < imgs/logo.png | tr -d '\n')
+curl -sS -X POST http://127.0.0.1:8001/parse/ \
+  -H 'Content-Type: application/json' \
+  --data "{\"base64_image\":\"$image_base64\"}"
+```
+
+Notes:
+
+- `OMNIPARSER_PRELOAD=false` gets the API up immediately and shifts model initialization to the first parse request.
+- The native MPS path was validated on an Apple M1 Pro with `OMNIPARSER_DEVICE=mps`.
+- Docker Desktop on macOS does not expose the Apple GPU to Linux containers, so this native path is the local GPU option.
+
+## Runpod Deployment
+
+The repo now includes a dual-mode Runpod entrypoint so you can iterate on a GPU pod over SSH and later promote the same image to a Serverless endpoint.
+
+### Build the image
+
+Use the parser-focused dependencies and bake the OmniParser v2 weights into the image during the build:
+
+```bash
+docker build --platform linux/amd64 -t YOUR_DOCKERHUB_USER/omniparser-runpod:latest .
+docker push YOUR_DOCKERHUB_USER/omniparser-runpod:latest
+```
+
+### Pod-first iteration
+
+1. Deploy the image to a Runpod Pod.
+2. Set `MODE_TO_RUN=pod`.
+3. Optionally set `PUBLIC_KEY` to enable SSH inside the container.
+4. The container starts the FastAPI service from `omnitool/omniparserserver/omniparserserver.py` on port `8000`.
+5. Test readiness with `curl http://127.0.0.1:8000/probe/`.
+
+### Serverless promotion
+
+1. Create a Serverless endpoint from the same image.
+2. Set `MODE_TO_RUN=serverless`.
+3. Send an event shaped like:
+
+```json
+{
+  "input": {
+    "base64_image": "..."
+  }
+}
+```
+
+The serverless handler returns the same parsing payload as the HTTP API: `som_image_base64`, `parsed_content_list`, and `latency`.
+
+### Runtime configuration
+
+The service accepts environment variables for the parser runtime:
+
+- `OMNIPARSER_SOM_MODEL_PATH`
+- `OMNIPARSER_CAPTION_MODEL_NAME`
+- `OMNIPARSER_CAPTION_MODEL_PATH`
+- `OMNIPARSER_DEVICE`
+- `OMNIPARSER_BOX_THRESHOLD`
+- `OMNIPARSER_HOST`
+- `OMNIPARSER_PORT`
+- `OMNIPARSER_PRELOAD`
+
 ## Model Weights License
 For the model checkpoints on huggingface model hub, please note that icon_detect model is under AGPL license since it is a license inherited from the original yolo model. And icon_caption_blip2 & icon_caption_florence is under MIT license. Please refer to the LICENSE file in the folder of each model: https://huggingface.co/microsoft/OmniParser.
 

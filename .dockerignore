@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+.gradio
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.ipynb
+eval/
+docs/
+imgs/
+omnitool/gradio/uploads/
+weights/

@@ -36,11 +36,17 @@ from util.box_annotator import BoxAnnotator
 
 def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2-opt-2.7b", device=None):
     if not device:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+    use_half_precision = device == 'cuda'
     if model_name == "blip2":
         from transformers import Blip2Processor, Blip2ForConditionalGeneration
         processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
-        if device == 'cpu':
+        if not use_half_precision:
             model = Blip2ForConditionalGeneration.from_pretrained(
             model_name_or_path, device_map=None, torch_dtype=torch.float32
         ) 
@@ -51,17 +57,19 @@ def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2
     elif model_name == "florence2":
         from transformers import AutoProcessor, AutoModelForCausalLM 
         processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base-ft", trust_remote_code=True)
-        if device == 'cpu':
+        if not use_half_precision:
             model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float32, trust_remote_code=True)
         else:
             model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float16, trust_remote_code=True).to(device)
     return {'model': model.to(device), 'processor': processor}
 
 
-def get_yolo_model(model_path):
+def get_yolo_model(model_path, device=None):
     from ultralytics import YOLO
     # Load the model.
     model = YOLO(model_path)
+    if device and hasattr(model, 'to'):
+        model.to(device)
     return model
 
 
@@ -295,7 +303,7 @@ def remove_overlap_new(boxes, iou_threshold, ocr_bbox=None):
                     else:
                         filtered_boxes.append({'type': 'icon', 'bbox': box1_elem['bbox'], 'interactivity': True, 'content': None, 'source':'box_yolo_content_yolo'})
             else:
-                filtered_boxes.append(box1)
+                filtered_boxes.append({'type': 'icon', 'bbox': box1_elem['bbox'], 'interactivity': True, 'content': None, 'source': 'box_yolo_content_yolo'})
     return filtered_boxes # torch.tensor(filtered_boxes)
 
 
@@ -365,23 +373,22 @@ def predict(model, image, caption, box_threshold, text_threshold):
     return boxes, logits, phrases
 
 
-def predict_yolo(model, image, box_threshold, imgsz, scale_img, iou_threshold=0.7):
+def predict_yolo(model, image, box_threshold, imgsz, scale_img, iou_threshold=0.7, device=None):
     """ Use huggingface model to replace the original model
     """
     # model = model['model']
+    predict_kwargs = {
+        'source': image,
+        'conf': box_threshold,
+        'iou': iou_threshold,
+    }
+    if device:
+        predict_kwargs['device'] = device
     if scale_img:
-        result = model.predict(
-        source=image,
-        conf=box_threshold,
-        imgsz=imgsz,
-        iou=iou_threshold, # default 0.7
-        )
+        predict_kwargs['imgsz'] = imgsz
+        result = model.predict(**predict_kwargs)
     else:
-        result = model.predict(
-        source=image,
-        conf=box_threshold,
-        iou=iou_threshold, # default 0.7
-        )
+        result = model.predict(**predict_kwargs)
     boxes = result[0].boxes.xyxy#.tolist() # in pixel space
     conf = result[0].boxes.conf
     phrases = [str(i) for i in range(len(boxes))]
@@ -394,7 +401,7 @@ def int_box_area(box, w, h):
     area = (int_box[2] - int_box[0]) * (int_box[3] - int_box[1])
     return area
 
-def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_TRESHOLD=0.01, output_coord_in_ratio=False, ocr_bbox=None, text_scale=0.4, text_padding=5, draw_bbox_config=None, caption_model_processor=None, ocr_text=[], use_local_semantics=True, iou_threshold=0.9,prompt=None, scale_img=False, imgsz=None, batch_size=128):
+def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_TRESHOLD=0.01, output_coord_in_ratio=False, ocr_bbox=None, text_scale=0.4, text_padding=5, draw_bbox_config=None, caption_model_processor=None, ocr_text=[], use_local_semantics=True, iou_threshold=0.9,prompt=None, scale_img=False, imgsz=None, batch_size=128, device=None):
     """Process either an image path or Image object
     
     Args:
@@ -408,7 +415,7 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
     if not imgsz:
         imgsz = (h, w)
     # print('image size:', w, h)
-    xyxy, logits, phrases = predict_yolo(model=model, image=image_source, box_threshold=BOX_TRESHOLD, imgsz=imgsz, scale_img=scale_img, iou_threshold=0.1)
+    xyxy, logits, phrases = predict_yolo(model=model, image=image_source, box_threshold=BOX_TRESHOLD, imgsz=imgsz, scale_img=scale_img, iou_threshold=0.1, device=device)
     xyxy = xyxy / torch.Tensor([w, h, w, h]).to(xyxy.device)
     image_source = np.asarray(image_source)
     phrases = [str(i) for i in range(len(phrases))]
@@ -416,12 +423,13 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
     # annotate the image with labels
     if ocr_bbox:
         ocr_bbox = torch.tensor(ocr_bbox) / torch.Tensor([w, h, w, h])
-        ocr_bbox=ocr_bbox.tolist()
+        ocr_bbox = ocr_bbox.tolist()
     else:
         print('no ocr bbox!!!')
-        ocr_bbox = None
+        ocr_bbox = []
 
-    ocr_bbox_elem = [{'type': 'text', 'bbox':box, 'interactivity':False, 'content':txt, 'source': 'box_ocr_content_ocr'} for box, txt in zip(ocr_bbox, ocr_text) if int_box_area(box, w, h) > 0] 
+    ocr_text = ocr_text or []
+    ocr_bbox_elem = [{'type': 'text', 'bbox': box, 'interactivity': False, 'content': txt, 'source': 'box_ocr_content_ocr'} for box, txt in zip(ocr_bbox, ocr_text) if int_box_area(box, w, h) > 0]
     xyxy_elem = [{'type': 'icon', 'bbox':box, 'interactivity':True, 'content':None} for box in xyxy.tolist() if int_box_area(box, w, h) > 0]
     filtered_boxes = remove_overlap_new(boxes=xyxy_elem, iou_threshold=iou_threshold, ocr_bbox=ocr_bbox_elem)
     
@@ -429,7 +437,10 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
     filtered_boxes_elem = sorted(filtered_boxes, key=lambda x: x['content'] is None)
     # get the index of the first 'content': None
     starting_idx = next((i for i, box in enumerate(filtered_boxes_elem) if box['content'] is None), -1)
-    filtered_boxes = torch.tensor([box['bbox'] for box in filtered_boxes_elem])
+    if filtered_boxes_elem:
+        filtered_boxes = torch.tensor([box['bbox'] for box in filtered_boxes_elem])
+    else:
+        filtered_boxes = torch.empty((0, 4))
     print('len(filtered_boxes):', len(filtered_boxes), starting_idx)
 
     # get parsed icon local semantics
